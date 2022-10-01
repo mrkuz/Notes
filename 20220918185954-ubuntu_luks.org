@@ -1,0 +1,173 @@
+:PROPERTIES:
+:ID:       880a58f7-b846-44a3-af0b-b70762757c32
+:END:
+#+title: Ubuntu LUKS
+
+How to set up Ubuntu with encrypted root.
+
+* Preparation
+** Download image
+
+Get latest Ubuntu Desktop: https://ubuntu.com/download/desktop
+
+** Create bootable USB stick
+
+#+BEGIN_SRC sh
+sudo dd if=ubuntu-22.04.1-desktop-amd64.iso of=/dev/sda bs=4M status=progress  
+#+END_SRC
+
+** Boot from USB stick
+* Before installer
+** Manual partitioning
+
+#+BEGIN_SRC sh
+parted /dev/sda -- mklabel gpt
+parted /dev/sda -- mkpart ESP fat32 1MiB 512MiB
+parted /dev/sda -- set 1 esp on
+parted /dev/sda -- mkpart primary 512MiB 100%
+
+# luks 2 is not supported by grub2
+cryptsetup luksFormat --type=luks1 /dev/sda2
+cryptsetup luksOpen /dev/sda2 crypt
+    
+mkfs.fat -F 32 -n boot /dev/sda1
+mkfs.btrfs -L ubuntu /dev/mapper/crypt
+#+END_SRC
+
+** Start installer
+
+Install without bootloader.
+
+#+BEGIN_SRC sh
+ubiquity -b
+#+END_SRC
+
+* Installer
+** Updates and other software
+
+- Minimal installation
+- Download updates
+- Install third-party software
+
+** Installation type
+
+Choose 'Something else'.
+
+- ~/dev/mapper/crypt~ as =btrfs /=
+- ~/dev/sda1~ as =efi=
+
+** Installation complete
+
+Choose 'Continue testing'.
+
+* After installer
+** Set up and enter chroot
+
+#+BEGIN_SRC sh
+mount -o subvol=@ /dev/mapper/crypt /mnt
+mount /dev/sda1 /mnt/boot/efi
+mount --bind /dev /mnt/dev
+mount --bind /proc /mnt/proc
+mount --bind /sys /mnt/sys
+chroot /mnt
+#+END_SRC
+
+** Set up keyfile
+
+This step is required, so you don't need to enter password twice.
+
+#+BEGIN_SRC sh
+UUID=$(blkid -s UUID -o value /dev/sda2)
+echo "crypt UUID=$UUID /etc/luks/boot.keyfile luks" > /etc/crypttab
+
+mkdir /etc/luks
+dd if=/dev/urandom of=/etc/luks/boot.keyfile bs=4096 count=1
+chmod 700 /etc/luks
+chmod 600 /etc/luks/boot.keyfile
+cryptsetup luksAddKey /dev/sda2 /etc/luks/boot.keyfile
+
+echo "KEYFILE_PATTERN=/etc/luks/*.keyfile" >> /etc/cryptsetup-initramfs/conf-hook
+echo "UMASK=0077" >> /etc/initramfs-tools/initramfs.conf
+
+update-initramfs -c -k all
+#+END_SRC
+
+** Install bootloader
+
+#+BEGIN_SRC sh
+apt install --reinstall grub-efi-amd64-signed
+grub-install /dev/sda1
+update-grub
+#+END_SRC
+
+** Reboot
+* After reboot
+** Enable BTRFS compression
+*** Defragment
+
+#+BEGIN_SRC sh
+btrfs filesystem defragment -r -v -czstd /
+#+END_SRC
+
+*** Update /etc/fstab
+
+Add ~noatime,compress=zstd:1~ to BTRFS entries.
+
+** Set up swap file
+*** Create new subvolume for swap file
+
+This is required for running snapper.
+
+#+BEGIN_SRC sh
+mkdir /swap
+mount /dev/mapper/crypt /mnt
+btrfs subvolume create /mnt/@swap
+umount /mnt
+
+echo "/dev/mapper/crypt /swap btrfs defaults,subvol=@swap,noatime,compress=none" >> /etc/fstab
+mount -a
+#+END_SRC
+
+*** Create swap file
+
+#+BEGIN_SRC sh
+truncate -s 0 /swap/swapfile
+chattr +C /swap/swapfile
+btrfs property set /swap/swapfile compression none
+fallocate -l 4G /swap/swapfile
+chmod 600 /swap/swapfile
+
+mkswap /swap/swapfile
+swapon /swap/swapfile
+
+echo "/swap/swapfile none swap defaults" >> /etc/fstab
+#+END_SRC
+
+** snapper
+*** Install
+
+#+BEGIN_SRC sh
+apt install snapper python3-distutils apt-btrfs-snapshot
+sudo snapper -c root create-config /
+#+END_SRC
+
+*** Disable time-based snapshots
+
+Edit =/etc/snapper/configs/root=:
+
+#+BEGIN_SRC
+TIMELINE_CREATE="no"
+#+END_SRC
+
+** Remove unused packages
+*** Snaps
+
+#+BEGIN_SRC sh
+snap remove firefox
+#+END_SRC
+
+*** APT
+
+#+BEGIN_SRC sh
+apt purge --autoremove yelp rhythmbox* libreoffice* ubiquity* apport* usb-creator*
+#+END_SRC
