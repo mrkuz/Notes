@@ -95,6 +95,8 @@ update-initramfs -c -k all
 ** Install bootloader
 
 #+BEGIN_SRC sh
+echo "GRUB_ENABLE_CRYPTODISK=y" >> /etc/default/grub
+
 apt install --reinstall grub-efi-amd64-signed
 grub-install /dev/sda1
 update-grub
@@ -171,3 +173,6 @@ snap remove firefox
 #+BEGIN_SRC sh
 apt purge --autoremove yelp rhythmbox* libreoffice* ubiquity* apport* usb-creator*
 #+END_SRC
+* Ressources
+
+- https://reckoning.dev/blog/ubuntu-btrfs-guide/
