@@ -67,8 +67,10 @@ Choose 'Continue testing'.
 mount -o subvol=@ /dev/mapper/crypt /mnt
 mount /dev/sda1 /mnt/boot/efi
 mount --bind /dev /mnt/dev
+mount --bind /dev/pts /mnt/dev/pts
 mount --bind /proc /mnt/proc
 mount --bind /sys /mnt/sys
+mount --bind /etc/resolv.conf /mnt/etc/resolv.conf
 chroot /mnt
 #+END_SRC
 
